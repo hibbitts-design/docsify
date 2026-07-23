@@ -68,8 +68,18 @@ jobs:
           publish_dir: ./dist
           publish_branch: dist
           keep_files: false
-          # This tags the dist-branch commit itself (the one that actually
-          # contains docsify.min.js etc.) — never the develop/source commit.
-          # That's what makes @v5.0.0 / @5 resolve to real files on jsDelivr.
+          # HEADS UP: this creates the version tag (like v5.0.0) on the "dist"
+          # branch, not on "develop". That's on purpose. "develop" only has the
+          # source code — the actual docsify.min.js file doesn't exist until
+          # this workflow builds it and puts it on the "dist" branch. If the
+          # tag pointed at "develop" instead, the CDN link would 404.
+          #
+          # So: don't create version tags yourself using GitHub's "Draft a new
+          # release" page (it always tags whatever branch you pick, usually
+          # "develop"). Instead, type the version into the "release_version"
+          # box when running this workflow manually — that's the only place
+          # tags should get created. (We hit this exact bug once already —
+          # see the "Guard against unexpected major version bump" step above
+          # for a similar safety check, and keep this one in mind too.)
           tag_name: ${{ steps.tag.outputs.name }}
           tag_message: 'Pinned build assets for ${{ steps.tag.outputs.name }}'
