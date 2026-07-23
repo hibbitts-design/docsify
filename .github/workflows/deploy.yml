@@ -1,0 +1,72 @@
+name: Build & Deploy Latest
+
+on:
+  push:
+    branches: [develop]        # covers your own future commits to develop
+    tags: ['v*']                # covers your own version tags, e.g. v5.1.0-mine
+  workflow_run:
+    workflows: ['Sync Fork with Upstream']
+    types: [completed]         # covers commits pulled in by the sync job
+  workflow_dispatch:
+    inputs:
+      allow_major_bump:
+        description: 'Allow publishing a major version other than the pinned one below (e.g. once you have verified v6 compatibility)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  # Bump this deliberately, in its own commit, once you've verified compatibility
+  # with a new major version. Until then this blocks any accidental publish of it.
+  ALLOWED_MAJOR_VERSION: '5'
+
+jobs:
+  build-and-deploy:
+    if: >
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Tag pushes build from that exact tag; everything else builds develop.
+          ref: ${{ startsWith(github.ref, 'refs/tags/') && github.ref || 'develop' }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+
+      - name: Guard against unexpected major version bump
+        run: |
+          MAJOR=$(node -p "require('./package.json').version.split('.')[0]")
+          if [ "$MAJOR" != "$ALLOWED_MAJOR_VERSION" ] && [ "${{ github.event.inputs.allow_major_bump }}" != "true" ]; then
+            echo "::error::package.json is version $MAJOR.x, but this workflow is pinned to major version $ALLOWED_MAJOR_VERSION. Refusing to build/publish — a new major version may break your projects. To proceed anyway, either re-run this workflow manually with 'allow_major_bump' checked, or update ALLOWED_MAJOR_VERSION in this file once you've verified compatibility."
+            exit 1
+          fi
+
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+
+      - name: Resolve tag (if this run was triggered by one)
+        id: tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish dist/ to the dist branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: dist
+          keep_files: false
+          # Only set on tag-triggered runs — also tags this dist-branch commit,
+          # so it's reachable at a pinned, immutable CDN URL alongside "latest".
+          tag_name: ${{ steps.tag.outputs.name }}
+          tag_message: 'Pinned build assets for ${{ steps.tag.outputs.name }}'
