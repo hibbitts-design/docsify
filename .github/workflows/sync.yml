@@ -1,0 +1,19 @@
+name: Sync Fork with Upstream
+
+on:
+  workflow_dispatch:   # manual only — run from the Actions tab whenever you want to pull upstream
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      # Safe by default: fast-forward only. If you've made your own commits
+      # on develop that upstream doesn't have, this step simply fails with
+      # a clear error instead of overwriting anything — nothing is lost.
+      - name: Sync develop from upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh repo sync ${{ github.repository }} --branch develop
