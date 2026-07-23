@@ -3,12 +3,14 @@ name: Build & Deploy Latest
 on:
   push:
     branches: [develop]        # covers your own future commits to develop
-    tags: ['v*']                # covers your own version tags, e.g. v5.1.0-mine
   workflow_run:
     workflows: ['Sync Fork with Upstream']
     types: [completed]         # covers commits pulled in by the sync job
   workflow_dispatch:
     inputs:
+      release_version:
+        description: 'Optional: tag this build, e.g. 5.0.0 or 5.4.1-custom.1 (leave blank for a plain untagged build)'
+        required: false
       allow_major_bump:
         description: 'Allow publishing a major version other than the pinned one below (e.g. once you have verified v6 compatibility)'
         type: boolean
@@ -31,8 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Tag pushes build from that exact tag; everything else builds develop.
-          ref: ${{ startsWith(github.ref, 'refs/tags/') && github.ref || 'develop' }}
+          ref: develop
 
       - uses: actions/setup-node@v7
         with:
@@ -50,11 +51,12 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
 
-      - name: Resolve tag (if this run was triggered by one)
+      - name: Resolve tag (only set if you typed a release_version above)
         id: tag
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          VERSION="${{ github.event.inputs.release_version }}"
+          if [ -n "$VERSION" ]; then
+            echo "name=v$VERSION" >> "$GITHUB_OUTPUT"
           else
             echo "name=" >> "$GITHUB_OUTPUT"
           fi
@@ -66,7 +68,8 @@ jobs:
           publish_dir: ./dist
           publish_branch: dist
           keep_files: false
-          # Only set on tag-triggered runs — also tags this dist-branch commit,
-          # so it's reachable at a pinned, immutable CDN URL alongside "latest".
+          # This tags the dist-branch commit itself (the one that actually
+          # contains docsify.min.js etc.) — never the develop/source commit.
+          # That's what makes @v5.0.0 / @5 resolve to real files on jsDelivr.
           tag_name: ${{ steps.tag.outputs.name }}
           tag_message: 'Pinned build assets for ${{ steps.tag.outputs.name }}'
