@@ -53,22 +53,6 @@
         var(--sidebar-chevron-expanded-color) 2.75px 4.25px,
         transparent 4.25px
       );
-  /* Chevron down (Mono) */
-  --sidebar-group-title-bg-expanded: no-repeat
-      calc(var(--_sidebar_pagelink-bg-left) - 2px) center / 5px 6px
-      linear-gradient(
-        225deg,
-        transparent 2.75px,
-        var(--sidebar-chevron-collapsed-color) 2.75px 4.25px,
-        transparent 4.25px
-      ),
-    no-repeat calc(var(--_sidebar_pagelink-bg-left) + 3px) center / 5px 6px
-      linear-gradient(
-        135deg,
-        transparent 2.75px,
-        var(--sidebar-chevron-collapsed-color) 2.75px 4.25px,
-        transparent 4.25px
-      );
   /* Dot (active without children) */
   --sidebar-pagelink-bg-empty: no-repeat var(--_sidebar_pagelink-bg-left) center /
     7px 7px
@@ -81,16 +65,8 @@
 }
 
 body[class*='sidebar-chevron'] {
-  .sidebar-nav :is(a.page-link, p.group-title[role='button']).no-chevron {
+  .sidebar-nav a.page-link.no-chevron {
     background: none;
-  }
-
-  .sidebar-nav p.group-title[role='button'] {
-    background: var(--sidebar-pagelink-bg);
-
-    &[aria-expanded='true'] {
-      background: var(--sidebar-group-title-bg-expanded);
-    }
   }
 }
 
@@ -105,7 +81,7 @@ body.sidebar-chevron-left {
     --_inset: 18px;
 
     li {
-      :is(a.page-link, p.group-title[role='button']) {
+      a.page-link {
         padding-left: var(--_inset);
       }
 
@@ -128,12 +104,8 @@ body.sidebar-chevron-left {
 
 body.sidebar-chevron-right {
   .sidebar-nav {
-    p.group-title[role='button'] {
-      margin-right: 0;
-    }
-
     li {
-      :is(a, p.group-title[role='button']) {
+      a {
         padding-right: calc(var(--_sidebar-inset) + 15px);
       }
     }
@@ -146,14 +118,6 @@ body.sidebar-chevron-right {
 :root:has(body.sidebar-group-box) {
   --sidebar-group-border : 1px solid var(--sidebar-border-color);
   --sidebar-group-spacing: 1em;
-}
-
-body.sidebar-group-box {
-  :is(.app-nav-merged, .sidebar-nav)
-    > ul
-    > li.group:is(:has(+ :not(.group)), :last-child).collapse {
-    padding-bottom: var(--sidebar-group-spacing);
-  }
 }
 
 /* prettier-ignore */
