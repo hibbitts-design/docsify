@@ -1145,6 +1145,36 @@
     }, [ prismExports ]);
     const decode = decodeURIComponent;
     const encode = encodeURIComponent;
+    const sidebarNavigationClassNames = [ "app-name-link", "page-link", "section-link" ];
+    function resolveHref(href) {
+        try {
+            return new URL(href, location.href).href;
+        } catch {
+            return href;
+        }
+    }
+    function findLinkByHref(rootElm, href, selector = "a") {
+        const resolvedHref = resolveHref(href);
+        return Array.from(rootElm.querySelectorAll(selector)).find((linkElm => linkElm.href === resolvedHref)) || null;
+    }
+    function getClickedLink(event) {
+        const target = event.target;
+        return target instanceof Element ? target.closest("a") : null;
+    }
+    function isCurrentContextNavigation(event, linkElm) {
+        return !(event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || linkElm.hasAttribute("download") || linkElm.target && linkElm.target !== "_self");
+    }
+    function getSidebarNavigationTarget(linkElm) {
+        const sidebarElm = linkElm.closest(".sidebar");
+        const className = sidebarNavigationClassNames.find((className => linkElm.classList.contains(className)));
+        if (!sidebarElm || !className) {
+            return;
+        }
+        return {
+            className: className,
+            href: linkElm.href
+        };
+    }
     function parseQuery(query) {
         const res = {};
         query = query.trim().replace(/^(\?|#|&)/, "");
@@ -1293,26 +1323,36 @@
         }
         onchange(cb = noop) {
             let navigating = false;
+            let navigatingFocusTarget;
             on("click", (e => {
-                const el = e.target.tagName === "A" ? e.target : e.target.parentNode;
-                if (el && el.tagName === "A" && !isExternal(el.href)) {
+                const el = getClickedLink(e);
+                if (el && isCurrentContextNavigation(e, el) && !isExternal(el.href)) {
                     navigating = true;
-                    if ([ "app-name-link", "page-link" ].includes(el.className)) {
+                    navigatingFocusTarget = getSidebarNavigationTarget(el);
+                    if (el.matches(".app-name-link, .page-link")) {
+                        if (el.hash === location.hash) {
+                            navigating = false;
+                            navigatingFocusTarget = undefined;
+                        }
                         return;
                     }
                     if (el.hash === location.hash) {
                         cb({
-                            event: e,
+                            focusTarget: navigatingFocusTarget,
                             source: "navigate"
                         });
+                        navigating = false;
+                        navigatingFocusTarget = undefined;
                     }
                 }
             }));
-            on("hashchange", (e => {
+            on("hashchange", (() => {
                 const source = navigating ? "navigate" : "history";
+                const focusTarget = navigating ? navigatingFocusTarget : undefined;
                 navigating = false;
+                navigatingFocusTarget = undefined;
                 cb({
-                    event: e,
+                    focusTarget: focusTarget,
                     source: source
                 });
             }));
@@ -1359,22 +1399,21 @@
         }
         onchange(cb = noop) {
             on("click", (e => {
-                const el = e.target.tagName === "A" ? e.target : e.target.parentNode;
-                if (el && el.tagName === "A" && !isExternal(el.href)) {
+                const el = getClickedLink(e);
+                if (el && isCurrentContextNavigation(e, el) && !isExternal(el.href)) {
                     e.preventDefault();
                     const url = el.href;
                     window.history.pushState({
                         key: url
                     }, "", url);
                     cb({
-                        event: e,
+                        focusTarget: getSidebarNavigationTarget(el),
                         source: "navigate"
                     });
                 }
             }));
-            on("popstate", (e => {
+            on("popstate", (() => {
                 cb({
-                    event: e,
                     source: "history"
                 });
             }));
@@ -1425,10 +1464,10 @@
                     this.updateRender();
                     this._updateRender();
                     if (lastRoute.path === this.route.path) {
-                        this.onNavigate(params.source);
+                        this.onNavigate(params.source, params.focusTarget);
                         return;
                     }
-                    this.$fetch(noop, this.onNavigate.bind(this, params.source));
+                    this.$fetch(noop, this.onNavigate.bind(this, params.source, params.focusTarget));
                     lastRoute = this.route;
                 }));
             }
@@ -5899,7 +5938,7 @@
             const {toc: toc} = this;
             const currentPath = this.router.getCurrentPath();
             let html = "";
-            if (text) {
+            if (typeof text === "string") {
                 return this.compile(text);
             }
             for (let i = 0; i < toc.length; i++) {
@@ -6515,6 +6554,15 @@
                     }
                 }));
             }
+            #normalizeSidebarPageLinks(sidebarNavEl) {
+                findAll(sidebarNavEl, "li > p").forEach((paragraph => {
+                    const link = paragraph.firstElementChild;
+                    const onlyContainsLink = [ ...paragraph.childNodes ].every((node => node === link || node.nodeType === 3 && !node.textContent?.trim()));
+                    if (!paragraph.attributes.length && paragraph.children.length === 1 && link?.tagName === "A" && onlyContainsLink) {
+                        paragraph.replaceWith(link);
+                    }
+                }));
+            }
             #executeScript() {
                 const script = findAll(".markdown-section>script").filter((s => !/template/.test(s.type)))[0];
                 if (!script) {
@@ -6641,7 +6689,7 @@
                 }
             }
             _renderSidebar(text) {
-                const {maxLevel: maxLevel, subMaxLevel: subMaxLevel, loadSidebar: loadSidebar, hideSidebar: hideSidebar} = this.config;
+                const {collapseSidebarGroups: collapseSidebarGroups, collapsibleSidebarGroups: collapsibleSidebarGroups, maxLevel: maxLevel, subMaxLevel: subMaxLevel, loadSidebar: loadSidebar, hideSidebar: hideSidebar} = this.config;
                 const sidebarEl = getNode("aside.sidebar");
                 const sidebarNavEl = getNode(".sidebar-nav");
                 const sidebarToggleEl = getNode("button.sidebar-toggle");
@@ -6653,10 +6701,11 @@
                 if (!this.compiler) {
                     throw new Error("Compiler is not initialized");
                 }
+                const sidebarGroupStates = new Map(findAll(sidebarNavEl, 'li.group > .group-toggle[role="button"][data-group-id]').map((elm => [ elm.getAttribute("data-group-id"), elm.closest("li")?.classList.contains("collapse") ])));
                 setHTML(".sidebar-nav", this.compiler.sidebar(text, maxLevel));
+                this.#normalizeSidebarPageLinks(sidebarNavEl);
                 sidebarToggleEl.setAttribute("aria-expanded", String(!isMobile()));
-                const activeElmHref = decodeURIComponent(this.router.toURL(this.route.path));
-                const activeEl = find(`.sidebar-nav a[href="${activeElmHref}"]`);
+                const activeEl = findLinkByHref(sidebarNavEl, this.router.toURL(this.route.path), "a");
                 this.#addTextAsTitleAttribute(".sidebar-nav a");
                 if (loadSidebar && activeEl) {
                     activeEl.closest("li")?.insertAdjacentHTML("beforeend", this.compiler.subSidebar(subMaxLevel) || "");
@@ -6664,14 +6713,43 @@
                     this.compiler.resetToc();
                 }
                 this._bindEventOnRendered(activeEl);
-                const pageLinks = findAll(sidebarNavEl, 'a:is(li > a, li > p > a):not(.section-link, [target="_blank"])');
-                const pageLinkGroups = findAll(sidebarEl, "li").filter((elm => elm.querySelector(":scope > ul") && !elm.querySelectorAll(":scope > a, :scope > p > a").length));
+                const pageLinks = findAll(sidebarNavEl, 'li > a:not(.section-link, [target="_blank"])');
+                const pageLinkGroups = findAll(sidebarEl, "li").filter((elm => elm.querySelector(":scope > ul") && !elm.querySelector(":scope > a")));
                 pageLinks.forEach((elm => {
                     elm.classList.add("page-link");
                 }));
                 pageLinkGroups.forEach((elm => {
                     elm.classList.add("group");
-                    elm.querySelector(":scope > p:not(:has(> *))")?.classList.add("group-title");
+                    let groupTitle = [ ...elm.children ].find((child => child.tagName === "P" && !child.querySelector("a")));
+                    const styledGroupTitle = groupTitle && !groupTitle.children.length ? groupTitle : null;
+                    if (!groupTitle) {
+                        const sublist = [ ...elm.children ].find((child => child.tagName === "UL"));
+                        const titleNodes = [];
+                        for (const child of elm.childNodes) {
+                            if (child === sublist) {
+                                break;
+                            }
+                            titleNodes.push(child);
+                        }
+                        if (sublist && titleNodes.some((node => node.textContent?.trim()))) {
+                            const newGroupTitle = document.createElement("p");
+                            titleNodes.forEach((node => newGroupTitle.append(node)));
+                            groupTitle = newGroupTitle;
+                            elm.insertBefore(newGroupTitle, sublist);
+                        }
+                    }
+                    styledGroupTitle?.classList.add("group-title");
+                    const rootList = elm.parentElement;
+                    if (collapsibleSidebarGroups && groupTitle && rootList?.parentElement === sidebarNavEl) {
+                        const groupId = `${[ ...sidebarNavEl.children ].indexOf(rootList)}:${[ ...rootList.children ].indexOf(elm)}`;
+                        const isCollapsed = sidebarGroupStates.get(groupId) ?? collapseSidebarGroups;
+                        elm.classList.toggle("collapse", isCollapsed);
+                        groupTitle.classList.add("group-toggle");
+                        groupTitle.setAttribute("data-group-id", groupId);
+                        groupTitle.setAttribute("role", "button");
+                        groupTitle.setAttribute("tabindex", "0");
+                        groupTitle.setAttribute("aria-expanded", String(!isCollapsed));
+                    }
                 }));
             }
             _bindEventOnRendered(activeEl) {
@@ -6696,7 +6774,43 @@
                 const html = this.compiler.compile(text);
                 [ ".app-nav", ".app-nav-merged" ].forEach((selector => {
                     setHTML(selector, html);
+                    if (this.config.navbarPreservePath) {
+                        this.#appendNavbarPath(selector);
+                    }
                     this.#addTextAsTitleAttribute(`${selector} a`);
+                }));
+            }
+            #appendNavbarPath(selector) {
+                const nav = find(selector);
+                if (!nav) {
+                    return;
+                }
+                const links = findAll(nav, "a").reduce(((links, link) => {
+                    const anchor = link;
+                    const href = anchor.getAttribute("href");
+                    if (!href || isExternal(anchor.href) || href.startsWith("#") && !href.startsWith("#/")) {
+                        return links;
+                    }
+                    const route = this.router.parse(href);
+                    const path = cleanPath(`/${route.path}`);
+                    if (route.query.id || path !== "/" && !path.endsWith("/")) {
+                        return links;
+                    }
+                    links.push({
+                        link: anchor,
+                        path: path,
+                        query: route.query
+                    });
+                    return links;
+                }), []);
+                const currentPath = cleanPath(`/${this.route.path}`);
+                const currentRoot = links.filter((({path: path}) => currentPath.startsWith(path))).sort(((a, b) => b.path.length - a.path.length))[0];
+                if (!currentRoot) {
+                    return;
+                }
+                const suffix = currentPath.slice(currentRoot.path.length);
+                links.forEach((({link: link, path: path, query: query}) => {
+                    link.setAttribute("href", this.router.toURL(`${path}${suffix}`, query));
                 }));
             }
             _renderMain(text, opt = {}, next) {
@@ -6843,6 +6957,7 @@
                 path = first ? path : path.replace(/\/$/, "");
                 path = getParentPath(path);
                 if (!path) {
+                    next("");
                     return;
                 }
                 get(vm.router.getFile(path + file) + qs, false, vm.config.requestHeaders).then(next, (_error => this.#loadNested(path, qs, file, next, vm)));
@@ -7118,6 +7233,11 @@
                     this.#toggleSidebar(!evt.matches);
                 }));
                 on(sidebarElm, "click", (({target: target}) => {
+                    const groupToggle = target.closest('.group-toggle[role="button"]');
+                    if (groupToggle) {
+                        this.#toggleSidebarGroup(groupToggle);
+                        return;
+                    }
                     const linkElm = target.closest("a");
                     const linkParent = linkElm?.closest("li");
                     const hasSubSidebar = linkParent?.querySelector(".app-sub-sidebar");
@@ -7125,6 +7245,21 @@
                         linkParent.classList.toggle("collapse");
                     }
                 }));
+                on(sidebarElm, "keydown", (event => {
+                    const groupToggle = event.target.closest('.group-toggle[role="button"]');
+                    if (groupToggle && (event.key === "Enter" || event.key === " ")) {
+                        event.preventDefault();
+                        this.#toggleSidebarGroup(groupToggle);
+                    }
+                }));
+            }
+            #toggleSidebarGroup(groupToggle) {
+                const group = groupToggle.closest("li");
+                if (!group) {
+                    return;
+                }
+                const isCollapsed = group.classList.toggle("collapse");
+                groupToggle.setAttribute("aria-expanded", String(!isCollapsed));
             }
             #initSidebarToggle() {
                 const contentElm = find("main > .content");
@@ -7168,7 +7303,7 @@
                 this.#markSidebarCurrentPage();
                 this.#initHeadings();
             }
-            onNavigate(source) {
+            onNavigate(source, focusTarget) {
                 const {auto2top: auto2top, topMargin: topMargin} = this.config;
                 const {path: path, query: query} = this.route;
                 const activeSidebarElm = this.#markSidebarActiveElm();
@@ -7192,7 +7327,10 @@
                     this.#toggleSidebar(false);
                 }
                 if (hasId || isNavigate) {
-                    this.#focusContent();
+                    const sidebarFocused = isNavigate && this.#focusSidebarNavigation(focusTarget);
+                    if (!sidebarFocused) {
+                        this.#focusContent();
+                    }
                 }
             }
             #focusContent(options = {}) {
@@ -7216,14 +7354,31 @@
                 }
                 return focusEl;
             }
+            #focusSidebarNavigation(target) {
+                if (!target || isMobile()) {
+                    return false;
+                }
+                const sidebarElm = find(".sidebar");
+                if (!sidebarElm) {
+                    return false;
+                }
+                const focusElm = findAll(sidebarElm, "a").find((linkElm => linkElm.classList.contains(target.className) && linkElm.href === target.href));
+                if (!focusElm) {
+                    return false;
+                }
+                focusElm.focus({
+                    preventScroll: true
+                });
+                return true;
+            }
             #markAppNavActiveElm() {
-                const href = decodeURIComponent(this.router.toURL(this.route.path));
+                const href = resolveHref(this.router.toURL(this.route.path));
                 [ ".app-nav", ".app-nav-merged" ].forEach((selector => {
                     const navElm = find(selector);
                     if (!navElm) {
                         return;
                     }
-                    const newActive = findAll(navElm, "a").sort(((a, b) => b.href.length - a.href.length)).find((a => href.includes(a.getAttribute("href")) || href.includes(decodeURI(a.getAttribute("href")))))?.closest("li");
+                    const newActive = findAll(navElm, "a").sort(((a, b) => b.href.length - a.href.length)).find((a => href.includes(a.href)))?.closest("li");
                     const oldActive = find(navElm, "li.active");
                     if (newActive && newActive !== oldActive) {
                         oldActive?.classList.remove("active");
@@ -7237,10 +7392,9 @@
                 if (!sidebar) {
                     return;
                 }
-                href = stripUrlExceptId(href);
+                const matchingHref = stripUrlExceptId(href);
                 const oldActive = find(sidebar, "li.active");
-                const sidebarSelector = `.sidebar-nav a[href="${href}"], .sidebar-nav a[href="${decodeURIComponent(href)}"]`;
-                const newActive = find(sidebar, sidebarSelector)?.closest("li");
+                const newActive = findLinkByHref(sidebar, matchingHref, ".sidebar-nav a")?.closest("li");
                 if (newActive && newActive !== oldActive) {
                     oldActive?.classList.remove("active");
                     newActive.classList.add("active");
@@ -7255,7 +7409,7 @@
                 }
                 const path = href?.split("?")[0];
                 const oldPage = find(sidebar, "li[aria-current]");
-                const newPage = find(sidebar, `a[href="${path}"], a[href="${decodeURIComponent(path)}"]`)?.closest("li");
+                const newPage = path ? findLinkByHref(sidebar, path, ".sidebar-nav a")?.closest("li") : undefined;
                 if (newPage && newPage !== oldPage) {
                     oldPage?.removeAttribute("aria-current");
                     newPage.setAttribute("aria-current", "page");
@@ -7568,6 +7722,8 @@
         autoHeader: false,
         basePath: "",
         catchPluginErrors: true,
+        collapseSidebarGroups: false,
+        collapsibleSidebarGroups: false,
         cornerExternalLinkTarget: "_blank",
         coverpage: "",
         el: "#app",
@@ -7589,6 +7745,7 @@
         markdown: null,
         maxLevel: 6,
         mergeNavbar: false,
+        navbarPreservePath: false,
         name: "",
         nameLink: window.location.pathname,
         nativeEmoji: false,
@@ -7728,10 +7885,14 @@
         __proto__: null,
         cached: cached$1,
         cleanPath: cleanPath,
+        findLinkByHref: findLinkByHref,
+        getClickedLink: getClickedLink,
         getParentPath: getParentPath,
         getPath: getPath,
+        getSidebarNavigationTarget: getSidebarNavigationTarget,
         hyphenate: hyphenate,
         isAbsolutePath: isAbsolutePath,
+        isCurrentContextNavigation: isCurrentContextNavigation,
         isExternal: isExternal,
         isFn: isFn,
         isMobile: isMobile,
@@ -7741,6 +7902,7 @@
         parseQuery: parseQuery,
         removeParams: removeParams,
         replaceSlug: replaceSlug,
+        resolveHref: resolveHref,
         resolvePath: resolvePath,
         stringifyQuery: stringifyQuery,
         stripUrlExceptId: stripUrlExceptId
