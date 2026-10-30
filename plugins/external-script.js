@@ -1,5 +1,5 @@
 /*!
- * Docsify Plugin: external-script v5.0.0
+ * Docsify Plugin: external-script v5.1.0
  * https://docsify.js.org
  * (c) 2017-2026
  * MIT license
@@ -14,7 +14,7 @@
             if (script.src) {
                 const newScript = document.createElement("script");
                 Array.from(script.attributes).forEach((attribute => {
-                    newScript[attribute.name] = attribute.value;
+                    newScript.setAttribute(attribute.name, attribute.value);
                 }));
                 script.before(newScript);
                 script.remove();

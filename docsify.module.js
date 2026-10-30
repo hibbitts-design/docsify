@@ -1,5 +1,5 @@
 /*!
- * Docsify v5.0.0
+ * Docsify v5.1.0
  * https://docsify.js.org
  * (c) 2017-2026
  * MIT license
@@ -5811,15 +5811,15 @@ const taskListItemCompiler = ({renderer: renderer}) => renderer.listitem = funct
     return html;
 };
 
-const linkCompiler = ({renderer: renderer, router: router, linkTarget: linkTarget, linkRel: linkRel, compiler: compiler}) => renderer.link = function({href: href, title: title = "", tokens: tokens}) {
+const linkCompiler = ({renderer: renderer, router: router, linkTarget: defaultLinkTarget, compiler: compiler}) => renderer.link = function({href: href, title: title = "", tokens: tokens}) {
     const attrs = [];
     const text = this.parser.parseInline(tokens) || "";
     const {str: str, config: config} = getAndRemoveConfig(title);
     const isAbsolute = isAbsolutePath(href);
     const isNotCompilable = compiler._matchNotCompileLink(href);
     const isMailto = href.startsWith("mailto:");
-    linkTarget = config.target || linkTarget;
-    linkRel = linkTarget === "_blank" ? compiler.config.externalLinkRel || "noopener" : "";
+    const linkTarget = config.target || defaultLinkTarget;
+    const linkRel = linkTarget === "_blank" ? compiler.config.externalLinkRel || "noopener" : "";
     title = str;
     if (!isAbsolute && !isNotCompilable && !config.ignore) {
         if (href === compiler.config.homepage) {
@@ -6017,7 +6017,7 @@ class Compiler {
     }
     _initRenderer() {
         const renderer = new g.Renderer;
-        const {linkTarget: linkTarget, linkRel: linkRel, router: router, contentBase: contentBase} = this;
+        const {linkTarget: linkTarget, router: router, contentBase: contentBase} = this;
         const origin = {};
         origin.heading = headingCompiler({
             renderer: renderer,
@@ -6035,7 +6035,6 @@ class Compiler {
             renderer: renderer,
             router: router,
             linkTarget: linkTarget,
-            linkRel: linkRel,
             compiler: this
         });
         origin.paragraph = paragraphCompiler({
@@ -6451,7 +6450,7 @@ function get(url, hasBar = false, headers = {}) {
     const cached = cache[url];
     if (cached) {
         return {
-            then: cb => cb(cached.content, cached.opt),
+            then: cb => cb(cached.content, cached.opt, cached.response),
             abort: noop
         };
     }
@@ -6492,9 +6491,10 @@ function get(url, hasBar = false, headers = {}) {
                         content: target.response,
                         opt: {
                             updatedAt: xhr.getResponseHeader("last-modified") ?? ""
-                        }
+                        },
+                        response: getResponseStatus(event)
                     };
-                    success(result.content, result.opt, getResponseStatus(event));
+                    success(result.content, result.opt, result.response);
                 }
             }));
         },
@@ -8117,6 +8117,6 @@ class Docsify extends(Fetch(Events(Render(VirtualRoutes(Router(Lifecycle(Object)
     }
 }
 
-const version = "5.0.0";
+const version = "5.1.0";
 
 export { Compiler, Docsify, dom, get, g as marked, prism, slugify, index as util, version };

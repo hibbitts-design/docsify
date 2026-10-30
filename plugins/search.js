@@ -1,5 +1,5 @@
 /*!
- * Docsify Plugin: search v5.0.0
+ * Docsify Plugin: search v5.1.0
  * https://docsify.js.org
  * (c) 2017-2026
  * MIT license
@@ -5729,7 +5729,7 @@
         search: "slug, title, body, path, indexKey",
         expires: "key, value"
     });
-    async function saveData(maxAge, expireKey) {
+    async function saveData(maxAge, expireKey, indexKey) {
         const records = [];
         Object.values(INDEXES).forEach((entry => {
             if (!entry || typeof entry !== "object") {
@@ -5746,11 +5746,18 @@
             }));
         }));
         INDEXES = records;
-        await db.search.bulkPut(records);
-        await db.expires.put({
-            key: expireKey,
-            value: Date.now() + maxAge
-        });
+        const searchTable = db.table("search");
+        const expiresTable = db.table("expires");
+        await db.transaction("rw", searchTable, expiresTable, (async () => {
+            await searchTable.where({
+                indexKey: indexKey
+            }).delete();
+            await searchTable.bulkPut(records);
+            await expiresTable.put({
+                key: expireKey,
+                value: Date.now() + maxAge
+            });
+        }));
     }
     async function getData(key, isExpireKey = false) {
         if (isExpireKey) {
@@ -5894,12 +5901,13 @@
                     indexKey: indexKey
                 };
             } else {
+                const codeText = token.type === "code" ? token.text : null;
                 if (tokenIndex === 0) {
                     slug = router.toURL(path);
                     index[slug] = {
                         slug: slug,
                         title: path !== "/" ? path.slice(1) : "Home Page",
-                        body: markdownToTxt(token.text || ""),
+                        body: "",
                         path: path,
                         indexKey: indexKey
                     };
@@ -5916,11 +5924,11 @@
                 } else if (index[slug].body) {
                     token.text = getTableData(token);
                     token.text = getListData(token);
-                    index[slug].body += "\n" + markdownToTxt(token.text || "");
+                    index[slug].body += "\n" + (codeText ?? markdownToTxt(token.text || ""));
                 } else {
                     token.text = getTableData(token);
                     token.text = getListData(token);
-                    index[slug].body = markdownToTxt(token.text || "");
+                    index[slug].body = codeText ?? markdownToTxt(token.text || "");
                 }
                 index[slug].path = path;
                 index[slug].indexKey = indexKey;
@@ -5954,10 +5962,10 @@
             const postContent = post.body && post.body.trim();
             const postUrl = post.slug || "";
             if (postTitle) {
+                handlePostTitle = escapeHtml(ignoreDiacriticalMarks(postTitle));
+                handlePostContent = postContent ? escapeHtml(ignoreDiacriticalMarks(postContent)) : postContent;
                 keywords.forEach((keyword => {
                     const regEx = new RegExp(escapeHtml(ignoreDiacriticalMarks(keyword)).replace(/[|\\{}()[\]^$+*?.]/g, "\\$&"), "gi");
-                    handlePostTitle = postTitle ? escapeHtml(ignoreDiacriticalMarks(postTitle)) : postTitle;
-                    handlePostContent = postContent ? escapeHtml(ignoreDiacriticalMarks(postContent)) : postContent;
                     const indexTitle = postTitle ? handlePostTitle.search(regEx) : -1;
                     let indexContent = postContent ? handlePostContent.search(regEx) : -1;
                     if (indexTitle >= 0 || indexContent >= 0) {
@@ -6024,7 +6032,7 @@
         let count = 0;
         const markComplete = async () => {
             if (len === ++count) {
-                await saveData(config.maxAge, expireKey);
+                await saveData(config.maxAge, expireKey, indexKey);
             }
         };
         paths.forEach((path => {
